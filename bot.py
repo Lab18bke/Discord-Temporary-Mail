@@ -14,18 +14,22 @@ ADMIN_ID = int(cfg["admin_id"])
 GUILD_ID = int(cfg["guild_id"])
 GUILD_OBJ = discord.Object(id=GUILD_ID)
 
-DATA_FILE = "data.json"
 
-if not os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "w") as f:
-        json.dump({"aliases": {}, "stats": []}, f)
+ALIASES_FILE = "aliases.json"
+STATS_FILE = "stats.json"
 
-def load_data():
-    with open(DATA_FILE) as f:
+
+for file, default in [(ALIASES_FILE, {}), (STATS_FILE, {"generated": [], "emails": []})]:
+    if not os.path.exists(file):
+        with open(file, "w") as f:
+            json.dump(default, f)
+
+def load_json(file):
+    with open(file) as f:
         return json.load(f)
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
+def save_json(file, data):
+    with open(file, "w") as f:
         json.dump(data, f)
 
 def gen_alias():
@@ -37,24 +41,28 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
 
+
 @tree.command(name="temporarymail", description="Generate or reset your temporary email alias.", guilds=[GUILD_OBJ])
 async def temporarymail(interaction: discord.Interaction):
-    data = load_data()
+    aliases = load_json(ALIASES_FILE)
+    stats = load_json(STATS_FILE)
     uid = str(interaction.user.id)
 
  
-    if uid in data["aliases"]:
-        old = data["aliases"][uid]
-        await interaction.user.send(f"⚠️ Your previous alias `{old['alias']}` has expired and been replaced.")
+    if uid in aliases:
+        old_alias = aliases[uid]["alias"]
+        try: await interaction.user.send(f"⚠️ Your previous alias `{old_alias}` has expired and been replaced.")
+        except: pass
 
-    alias = gen_alias() + "@" + DOMAIN
-    data["aliases"][uid] = {
-        "alias": alias,
-        "created": time.time()
-    }
-    save_data(data)
+    new_alias = gen_alias() + "@" + DOMAIN
+    aliases[uid] = {"alias": new_alias, "created": time.time()}
+    save_json(ALIASES_FILE, aliases)
+
+    stats["generated"].append(time.time())
+    save_json(STATS_FILE, stats)
+
     await interaction.response.send_message(
-        f"✅ Your new email alias is `{alias}`.\nAll emails sent to it will DM you here.\nThis alias will expire after 24 hours.",
+        f"✅ Your new email alias is `{new_alias}`.\nAll emails sent to it will DM you here.\nThis alias will expire after 24 hours.",
         ephemeral=True
     )
 
@@ -64,23 +72,35 @@ async def summary(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You can’t use this command.", ephemeral=True)
         return
 
-    data = load_data()
+    aliases = load_json(ALIASES_FILE)
+    stats = load_json(STATS_FILE)
     cutoff = time.time() - 86400
-    data["stats"] = [x for x in data["stats"] if x["time"] > cutoff]
-    active_aliases = [a for a in data["aliases"].values() if a["created"] > cutoff]
+
+
+    stats["generated"] = [t for t in stats.get("generated", []) if t > cutoff]
+    stats["emails"] = [t for t in stats.get("emails", []) if t > cutoff]
+
+
+    active_aliases = [a for a in aliases.values() if a["created"] > cutoff]
+
+    save_json(STATS_FILE, stats)
+    save_json(ALIASES_FILE, aliases)
 
     await interaction.response.send_message(
-        f"📊 **Last 24 h Summary**\nActive aliases: **{len(active_aliases)}**\nEmails received: **{len(data['stats'])}**",
+        f"📊 **Last 24 h Summary**\nActive aliases: **{len(active_aliases)}**\nEmails received: **{len(stats['emails'])}**",
         ephemeral=True
     )
-    save_data(data)
 
 
 async def check_unseen(client):
-    typ, data = await client.search("UNSEEN")
+    typ, data_ids = await client.search("UNSEEN")
     if typ != "OK": return
-    ids = data[0].split()
+    ids = data_ids[0].split()
     if not ids: return
+
+    aliases = load_json(ALIASES_FILE)
+    stats = load_json(STATS_FILE)
+
     for msgid in ids:
         _, msg_data = await client.fetch(msgid, "(RFC822)")
         raw_email = msg_data[0][1]
@@ -90,14 +110,14 @@ async def check_unseen(client):
         to_addr = msg.get("To", "")
         alias_name = to_addr.split("@")[0].lower()
 
-        data = load_data()
+    
         user_id = None
-        for uid, al in data["aliases"].items():
-            if al["alias"].startswith(alias_name):
+        for uid, info in aliases.items():
+            if info["alias"].split("@")[0].lower() == alias_name:
                 user_id = uid
                 break
-        if not user_id:
-            continue
+        if not user_id: continue
+
 
         body = ""
         if msg.is_multipart():
@@ -112,28 +132,26 @@ async def check_unseen(client):
         if user:
             try:
                 await user.send(f"📩 **New Mail Received!**\n**From:** {from_addr}\n**Subject:** {subject}\n\n{body[:1800]}")
-            except:
-                pass
+            except: pass
 
-        data["stats"].append({"time": time.time(), "alias": alias_name})
-        save_data(data)
+
+        stats["emails"].append(time.time())
+        save_json(STATS_FILE, stats)
 
 async def cleanup_aliases():
     while True:
-        data = load_data()
+        aliases = load_json(ALIASES_FILE)
         now = time.time()
-        expired = [uid for uid, info in data["aliases"].items() if now - info["created"] > 86400]
+        expired = [uid for uid, info in aliases.items() if now - info["created"] > 86400]
         for uid in expired:
-            alias = data["aliases"][uid]["alias"]
+            alias = aliases[uid]["alias"]
             user = bot.get_user(int(uid))
             if user:
-                try:
-                    await user.send(f"⏰ Your previous alias `{alias}` has expired.")
-                except:
-                    pass
-            del data["aliases"][uid]
-        save_data(data)
-        await asyncio.sleep(300)  
+                try: await user.send(f"⏰ Your previous alias `{alias}` has expired.")
+                except: pass
+            del aliases[uid]
+        save_json(ALIASES_FILE, aliases)
+        await asyncio.sleep(300) 
 
 async def idle_loop():
     while True:
@@ -158,7 +176,7 @@ async def idle_loop():
 @bot.event
 async def on_ready():
     await tree.sync(guild=GUILD_OBJ)
-    print(f"✅ Logged in as {bot.user} (Guild: {GUILD_ID})")
+    print(f"✅ Logged in as {bot.user} (Guild {GUILD_ID})")
     bot.loop.create_task(idle_loop())
     bot.loop.create_task(cleanup_aliases())
 
