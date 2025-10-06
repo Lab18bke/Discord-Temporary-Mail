@@ -1,5 +1,5 @@
 # Discord-Temporary-Mail
-## A Discord Bot to setup your own Temporary Mail site, inside of Discord.
+## A Discord Bot to setup your own Temporary Mail, inside of Discord.
 
 First: 
 1. Setup **config.json** - fill it with the Information. (Note: Domain is the @____ ) (The EMail Inbox whose details are filled must be a Catch All Inbox on that Domain)
