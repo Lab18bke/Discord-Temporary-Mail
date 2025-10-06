@@ -1,0 +1,9 @@
+{
+  "token": "YOUR_DISCORD_BOT_TOKEN",
+  "mail_host": "YOUR_MAIL_HOST",
+  "mail_user": "INBOX_MUST_BE_CATCHALL",
+  "mail_pass": "YOUR_IMAP_PASSWORD",
+  "admin_id": 850216530398281729,
+  "guild_id": 128374982374982374, 
+  "domain": "THE_DOMAIN"
+}
